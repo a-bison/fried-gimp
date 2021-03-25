@@ -53,29 +53,56 @@
       jpeg-dct
     )
 
+    ; load compressed image
     (set! jpegged-image 
       (car (file-jpeg-load RUN-NONINTERACTIVE tmp-path tmp-path)))
     
+    ; Duplicate layer at the same position as modified one,
+    ; will appear right above old layer
     (set! out-layer 
-      (car (gimp-layer-new image
-                           width
-                           height
-                           RGB-IMAGE
-                           "JPEGIFY"
-                           100
-                           LAYER-MODE-NORMAL)))
-    (gimp-image-insert-layer image out-layer 0 0)
+      (car (gimp-layer-copy drawable TRUE)))
+    (let*
+      (
+        (layer-pos (car (gimp-image-get-item-position image drawable)))
+        (layer-parent (car (gimp-item-get-parent drawable)))
+      )
 
+      (gimp-image-insert-layer image out-layer layer-parent layer-pos)
+    )
+
+    ; Alpha handling. Use a mask to preserve original layer's alpha
+    (let 
+      (
+        (orig-mask (car (gimp-layer-get-mask out-layer)))
+        (new-mask 0)
+      )
+      (gimp-layer-add-alpha out-layer)
+      ; if layer has mask, apply to merge mask with alpha channel
+      (when (not (= orig-mask -1))
+        (gimp-layer-remove-mask out-layer MASK-APPLY))
+      ; use mask to preserve alpha for copying in result
+      (set! new-mask
+        (car (gimp-layer-create-mask out-layer ADD-MASK-ALPHA)))
+      (gimp-layer-add-mask out-layer new-mask)
+    )
+
+    ; Copy data from jpegged image to new layer, delete temporary data
     (gimp-edit-copy 
       (car (gimp-image-get-layer-by-name jpegged-image "Background")))
-    
     (let ((floating-layer (car (gimp-edit-paste out-layer FALSE))))
       (gimp-floating-sel-anchor floating-layer)
     )
-
     (gimp-image-delete jpegged-image)
     (file-delete tmp-path)
 
+    ; Finally, apply the layer mask to re-apply transparency
+    (gimp-layer-remove-mask out-layer MASK-APPLY)
+
+    ; Rename layer
+    (gimp-item-set-name out-layer
+      (string-append "jpegify_" (car (gimp-item-get-name drawable))))
+
+    ; cleanup
     (gimp-image-undo-group-end image)
     (gimp-displays-flush)
     (gimp-context-pop)
